@@ -1,101 +1,277 @@
----
-title: Create a project
-description: Learn how to create a new Expo project.
-hideTOC: true
----
+import React, { useEffect, useState } from "react";
+import {
+  SafeAreaView, View, Text, Pressable, TextInput, ScrollView,
+  Switch, Alert, StyleSheet, StatusBar
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { RelatedSkills } from '~/ui/components/RelatedSkills';
-import { Terminal } from '~/ui/components/Snippet';
-import { Tabs, Tab } from '~/ui/components/Tabs';
+const STORAGE_KEY = "afterhours_guard_v1";
+const ACTIONS = [
+  { id: "ex", title: "Texting an ex", detail: "Put the message in a draft instead." },
+  { id: "posts", title: "Posting or going live", detail: "Save it for tomorrow-you to review." },
+  { id: "dm", title: "Sending risky DMs", detail: "Pause before sending anything personal." },
+  { id: "shopping", title: "Impulse shopping", detail: "Keep your card details out of reach." },
+  { id: "calls", title: "Calling someone impulsively", detail: "Write down what you want to say." },
+  { id: "screenshots", title: "Sharing private screenshots", detail: "Never share private or intimate content without consent." },
+];
 
-Expo is a React Native framework that makes developing Android and iOS apps easier. Our framework provides file-based routing, a standard library of native modules, and much more. Expo is open source with an active community on [GitHub](https://github.com/expo/expo) and [Discord](https://chat.expo.dev).
+const DURATIONS = [
+  { label: "1 hour", hours: 1 },
+  { label: "3 hours", hours: 3 },
+  { label: "6 hours", hours: 6 },
+  { label: "Until morning", hours: 10 },
+];
 
-We also make [Expo Application Services (EAS)](https://expo.dev/services), a set of services that complement the Expo framework in each step of the development process.
+function remaining(ms) {
+  if (ms <= 0) return "00:00";
+  const total = Math.ceil(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
-> **info** **New to programming?** You can build your first Expo app by prompting an AI coding agent instead of writing code. Follow the [Build with AI tutorial](/tutorial/build-with-ai/introduction/). It covers setup from scratch.
+export default function App() {
+  const [modeUntil, setModeUntil] = useState(0);
+  const [now, setNow] = useState(Date.now());
+  const [enabled, setEnabled] = useState({ ex: true, posts: true, dm: true, shopping: true, calls: true, screenshots: true });
+  const [contact, setContact] = useState("");
+  const [draft, setDraft] = useState("");
+  const [drafts, setDrafts] = useState([]);
+  const [urge, setUrge] = useState(false);
+  const [urgeUntil, setUrgeUntil] = useState(0);
+  const [setupDone, setSetupDone] = useState(false);
 
-## System requirements
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const data = JSON.parse(raw);
+          setModeUntil(data.modeUntil || 0);
+          setEnabled(data.enabled || enabled);
+          setContact(data.contact || "");
+          setDrafts(data.drafts || []);
+          setSetupDone(true);
+        }
+      } catch (_) {}
+    })();
+  }, []);
 
-- [Node.js (LTS)](https://nodejs.org/en/).
-- macOS, Windows (Powershell and [WSL 2](https://expo.fyi/wsl)), and Linux are supported.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-## Start with a default project
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ modeUntil, enabled, contact, drafts })).catch(() => {});
+  }, [modeUntil, enabled, contact, drafts]);
 
-We recommend starting with the default project created by [`create-expo-app`](/more/create-expo/). The default project includes example code to help you get started.
+  useEffect(() => {
+    if (urge && now >= urgeUntil) setUrge(false);
+  }, [now, urge, urgeUntil]);
 
-To create a new project, run the following command:
+  const active = modeUntil > now;
 
-<Terminal
-  cmd={{
-    npm: ['$ npx create-expo-app@latest'],
-    yarn: ['$ yarn create expo-app'],
-    pnpm: ['$ pnpm create expo-app'],
-    bun: ['$ bun create expo'],
-  }}
-/>
+  function startMode(hours) {
+    setModeUntil(Date.now() + hours * 60 * 60 * 1000);
+    setSetupDone(true);
+    setUrge(false);
+    Alert.alert("Guard mode is on ð¡ï¸", "Your pause timer has started. This app helps you slow down, save drafts, and remember your boundaries.");
+  }
 
-> You can choose a different template by adding the [`--template` option](/more/create-expo/#--template).
+  function endMode() {
+    Alert.alert(
+      "End Guard mode?",
+      "Future-you asked for this protection. If youâre feeling impaired, the safest choice is to keep the timer running.",
+      [
+        { text: "Keep it on", style: "cancel" },
+        { text: "End anyway", style: "destructive", onPress: () => setModeUntil(0) }
+      ]
+    );
+  }
 
-## Start from an example
+  function saveDraft() {
+    if (!draft.trim()) {
+      Alert.alert("Nothing to save", "Write what you want to say first.");
+      return;
+    }
+    setDrafts([{ id: String(Date.now()), body: draft.trim(), createdAt: new Date().toLocaleString() }, ...drafts]);
+    setDraft("");
+    Alert.alert("Saved for tomorrow ð", "Your message is stored here, not sent to anyone. Re-read it when youâre clear-headed.");
+  }
 
-Instead of the default project, you can start from one of the [Expo examples](https://github.com/expo/examples). These are small apps that each demonstrate a specific feature or integration, such as Expo Router, Expo Widgets, or a camera screen.
+  function deleteDraft(id) {
+    Alert.alert("Delete this draft?", "This cannot be undone.", [
+      { text: "Keep", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => setDrafts(drafts.filter(d => d.id !== id)) }
+    ]);
+  }
 
-To browse the full list and pick one interactively, run `create-expo-app` with the [`--example`](/more/create-expo/#--example) option and no name:
+  function startUrgePause() {
+    setUrge(true);
+    setUrgeUntil(Date.now() + 20 * 1000);
+  }
 
-<Terminal
-  cmd={{
-    npm: ['$ npx create-expo-app@latest --example'],
-    yarn: ['$ yarn create expo-app --example'],
-    pnpm: ['$ pnpm create expo-app --example'],
-    bun: ['$ bun create expo --example'],
-  }}
-/>
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView contentContainerStyle={styles.container}>
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>YOUR FUTURE SELF SAYS THANK YOU</Text>
+          <Text style={styles.logo}>afterhours<Text style={styles.logoDot}>.</Text></Text>
+          <Text style={styles.subtitle}>A little space between the impulse and the send button.</Text>
+          <View style={[styles.status, active ? styles.statusOn : styles.statusOff]}>
+            <View style={[styles.statusDot, active ? styles.dotOn : styles.dotOff]} />
+            <Text style={styles.statusText}>{active ? `GUARD MODE ON Â· ${remaining(modeUntil - now)} LEFT` : "GUARD MODE OFF"}</Text>
+          </View>
+        </View>
 
-To create a known example directly, pass its name:
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>ð¡ï¸ Set your guard</Text>
+          <Text style={styles.muted}>Choose how long you want your future self to be protected.</Text>
+          <View style={styles.durationGrid}>
+            {DURATIONS.map(item => (
+              <Pressable key={item.label} onPress={() => startMode(item.hours)} style={({ pressed }) => [styles.duration, pressed && styles.pressed, active && modeUntil - now > 0 && Math.abs((modeUntil - now) - item.hours * 3600000) < 60000 && styles.durationSelected]}>
+                <Text style={styles.durationLabel}>{item.label}</Text>
+                <Text style={styles.durationSub}>{item.hours === 10 ? "Sleep on it" : "Stay grounded"}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {active && <Pressable onPress={endMode} style={styles.textButton}><Text style={styles.textButtonText}>End guard mode early</Text></Pressable>}
+        </View>
 
-<Terminal
-  cmd={{
-    npm: ['$ npx create-expo-app@latest --example with-widgets'],
-    yarn: ['$ yarn create expo-app --example with-widgets'],
-    pnpm: ['$ pnpm create expo-app --example with-widgets'],
-    bun: ['$ bun create expo --example with-widgets'],
-  }}
-/>
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>ð« Your no-regrets list</Text>
+          <Text style={styles.muted}>Choose the situations you want reminders for while Guard mode is on.</Text>
+          {ACTIONS.map((item, index) => (
+            <View key={item.id} style={[styles.actionRow, index === ACTIONS.length - 1 && { borderBottomWidth: 0 }]}>
+              <View style={styles.actionCopy}>
+                <Text style={styles.actionTitle}>{item.title}</Text>
+                <Text style={styles.actionDetail}>{item.detail}</Text>
+              </View>
+              <Switch value={!!enabled[item.id]} onValueChange={v => setEnabled({ ...enabled, [item.id]: v })} trackColor={{ false: "#34343d", true: "#bca6ff" }} thumbColor={enabled[item.id] ? "#ffffff" : "#9999a5"} />
+            </View>
+          ))}
+          <Text style={styles.smallNote}>These are personal reminders. Phone operating systems do not let an ordinary app silently block every other app or intercept messages from Instagram, iMessage, TikTok, etc.</Text>
+        </View>
 
-> **info** The rest of the guides in this **"Get started"** section follows the default project. An example app may be organized differently but the concepts are the same.
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>ð The unsent-message vault</Text>
+          <Text style={styles.muted}>Say it here. Don't send it tonight.</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Type the message you really want to sendâ¦"
+            placeholderTextColor="#858392"
+            value={draft}
+            onChangeText={setDraft}
+            multiline
+            textAlignVertical="top"
+          />
+          <Pressable style={styles.primaryButton} onPress={saveDraft}>
+            <Text style={styles.primaryButtonText}>Save it for tomorrow</Text>
+          </Pressable>
+          {drafts.length > 0 && <Text style={styles.subhead}>Saved drafts ({drafts.length})</Text>}
+          {drafts.map(item => (
+            <View key={item.id} style={styles.draftCard}>
+              <Text style={styles.draftDate}>{item.createdAt}</Text>
+              <Text style={styles.draftBody}>{item.body}</Text>
+              <Pressable onPress={() => deleteDraft(item.id)}><Text style={styles.deleteText}>Delete draft</Text></Pressable>
+            </View>
+          ))}
+        </View>
 
-## Set up an AI agent
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>â¸ï¸ The 20-second reset</Text>
+          <Text style={styles.muted}>For when youâre about to do something you might regret.</Text>
+          {!urge ? (
+            <Pressable style={styles.secondaryButton} onPress={startUrgePause}>
+              <Text style={styles.secondaryButtonText}>I have an urge â pause me</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.pauseBox}>
+              <Text style={styles.pauseNumber}>{Math.max(0, Math.ceil((urgeUntil - now) / 1000))}</Text>
+              <Text style={styles.pauseHeadline}>Breathe. Nothing needs to happen right now.</Text>
+              <Text style={styles.pauseText}>Put your phone face down. Take a slow breath in, then a longer breath out. Ask: âWill I be glad I did this tomorrow?â</Text>
+              <Pressable onPress={() => setUrge(false)} style={styles.textButton}><Text style={styles.textButtonText}>I feel calmer</Text></Pressable>
+            </View>
+          )}
+        </View>
 
-A new project includes **AGENTS.md** with project context for AI agents. When Claude Code is installed, it also includes **.claude/settings.json** to enable the Expo plugin. Claude Code and Codex have an official Expo plugin. Using one command, you can install [Expo Skills](/skills/) and register the [Expo Model Context Protocol (MCP) Server](/mcp/):
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>ð¤ Your real-life safety plan</Text>
+          <Text style={styles.muted}>A trusted person can help you get home safely or hold onto your phone for a while.</Text>
+          <TextInput
+            style={styles.singleInput}
+            placeholder="Trusted person's name or number (optional)"
+            placeholderTextColor="#858392"
+            value={contact}
+            onChangeText={setContact}
+            autoCapitalize="words"
+          />
+          <Text style={styles.smallNote}>This saves a reminder only; it does not contact them automatically. If youâve been drinking, donât drive. Stay with someone you trust and arrange a sober ride.</Text>
+        </View>
 
-<Tabs>
+        <View style={styles.footer}>
+          <Text style={styles.footerTitle}>A reminder from tomorrow-you</Text>
+          <Text style={styles.footerQuote}>âYou don't have to act on every feeling. You can feel it, write it down, and decide later.â</Text>
+          <Text style={styles.footerTiny}>AFTERHOURS Â· YOUR PEACE OVER YOUR IMPULSE</Text>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
 
-<Tab label="Claude Code">
-
-<Terminal cmd={['$ claude plugin install expo@claude-plugins-official']} />
-
-Then run `/mcp` inside your Claude Code session to sign in to your Expo account.
-
-</Tab>
-
-<Tab label="Codex">
-
-<Terminal cmd={['$ codex plugin add expo@openai-curated']} />
-
-Then sign in to your Expo account:
-
-<Terminal cmd={['$ codex mcp login expo']} />
-
-</Tab>
-
-</Tabs>
-
-The plugin also installs the skill that teaches an agent where files live in a new Expo project:
-
-<RelatedSkills names={['expo-project-structure']} />
-
-For Cursor and other agents, install [Expo Skills](/skills/) and the [Expo MCP Server](/mcp/) separately. The [AI agents and Expo](/agents/) overview covers setup for each agent.
-
-## Next step
-
-You have a project. Now it's time to set up your development environment so that you can start developing.
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: "#111018" },
+  container: { padding: 18, paddingBottom: 42 },
+  hero: { paddingTop: 28, paddingBottom: 22 },
+  eyebrow: { color: "#bca6ff", fontSize: 10, letterSpacing: 2.2, fontWeight: "800", marginBottom: 10 },
+  logo: { color: "#fff", fontSize: 43, fontWeight: "900", letterSpacing: -1.7 },
+  logoDot: { color: "#bca6ff" },
+  subtitle: { color: "#c4c0d2", fontSize: 15, lineHeight: 22, marginTop: 6, maxWidth: 300 },
+  status: { marginTop: 20, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", borderRadius: 30, paddingVertical: 9, paddingHorizontal: 13 },
+  statusOn: { backgroundColor: "#29213f", borderWidth: 1, borderColor: "#8f74dc" },
+  statusOff: { backgroundColor: "#24232c", borderWidth: 1, borderColor: "#45434f" },
+  statusDot: { width: 7, height: 7, borderRadius: 5, marginRight: 8 },
+  dotOn: { backgroundColor: "#c5afff" },
+  dotOff: { backgroundColor: "#898694" },
+  statusText: { color: "#f0ebff", fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  card: { backgroundColor: "#1b1924", borderColor: "#302d3b", borderWidth: 1, borderRadius: 22, padding: 18, marginBottom: 14 },
+  sectionTitle: { color: "#fff", fontSize: 18, fontWeight: "800", marginBottom: 7 },
+  muted: { color: "#aaa6b8", fontSize: 13, lineHeight: 19, marginBottom: 14 },
+  durationGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
+  duration: { width: "48%", backgroundColor: "#272432", borderWidth: 1, borderColor: "#3c374b", borderRadius: 15, padding: 14 },
+  durationSelected: { borderColor: "#bca6ff", backgroundColor: "#332a4b" },
+  durationLabel: { color: "#fff", fontSize: 16, fontWeight: "800" },
+  durationSub: { color: "#aaa6b8", fontSize: 11, marginTop: 4 },
+  pressed: { opacity: 0.75, transform: [{ scale: 0.99 }] },
+  textButton: { alignSelf: "center", padding: 12, marginTop: 4 },
+  textButtonText: { color: "#c6b4ff", fontWeight: "700", fontSize: 13 },
+  actionRow: { flexDirection: "row", alignItems: "center", paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: "#302d3b", gap: 10 },
+  actionCopy: { flex: 1 },
+  actionTitle: { color: "#f7f5ff", fontSize: 14, fontWeight: "700" },
+  actionDetail: { color: "#aaa6b8", fontSize: 12, lineHeight: 17, marginTop: 4 },
+  smallNote: { color: "#858192", fontSize: 11, lineHeight: 16, marginTop: 13 },
+  input: { minHeight: 110, backgroundColor: "#111018", borderColor: "#3a3548", borderWidth: 1, borderRadius: 14, padding: 13, color: "#fff", fontSize: 14, marginBottom: 11 },
+  singleInput: { backgroundColor: "#111018", borderColor: "#3a3548", borderWidth: 1, borderRadius: 13, padding: 13, color: "#fff", fontSize: 14 },
+  primaryButton: { backgroundColor: "#bca6ff", borderRadius: 14, alignItems: "center", padding: 15 },
+  primaryButtonText: { color: "#191323", fontWeight: "900", fontSize: 14 },
+  subhead: { color: "#e6ddff", fontWeight: "800", marginTop: 18, marginBottom: 8 },
+  draftCard: { backgroundColor: "#252230", borderRadius: 13, padding: 13, marginTop: 8 },
+  draftDate: { color: "#9993ac", fontSize: 10, marginBottom: 7 },
+  draftBody: { color: "#f3efff", fontSize: 14, lineHeight: 20 },
+  deleteText: { color: "#e4a7c4", fontSize: 12, fontWeight: "700", marginTop: 12 },
+  secondaryButton: { borderColor: "#bca6ff", borderWidth: 1, borderRadius: 14, padding: 15, alignItems: "center" },
+  secondaryButtonText: { color: "#d8ccff", fontWeight: "800" },
+  pauseBox: { backgroundColor: "#29213f", borderRadius: 16, padding: 18, alignItems: "center" },
+  pauseNumber: { color: "#fff", fontSize: 50, fontWeight: "900" },
+  pauseHeadline: { color: "#eee7ff", fontWeight: "800", fontSize: 15, textAlign: "center", marginTop: 4 },
+  pauseText: { color: "#c4bbdb", fontSize: 13, lineHeight: 20, textAlign: "center", marginTop: 10 },
+  footer: { alignItems: "center", padding: 20, marginTop: 2 },
+  footerTitle: { color: "#bca6ff", fontSize: 12, fontWeight: "900", letterSpacing: 1.3, textTransform: "uppercase" },
+  footerQuote: { color: "#d8d3e3", fontSize: 16, lineHeight: 24, textAlign: "center", marginTop: 10, maxWidth: 300 },
+  footerTiny: { color: "#666173", fontSize: 9, letterSpacing: 1.5, marginTop: 20, fontWeight: "800" },
+});
